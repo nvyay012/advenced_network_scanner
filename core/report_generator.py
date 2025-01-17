@@ -195,4 +195,69 @@ class ReportGenerator:
         </html>
         """
         
-        with open(filepath
+        with open(filepath, 'w') as f:
+            f.write(html)
+
+    def export_to_database(self, db_connection):
+        """Export results to a database"""
+        try:
+            cursor = db_connection.cursor()
+            
+            # Create tables if they don't exist
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS scans (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    target TEXT,
+                    scan_type TEXT,
+                    timestamp TEXT
+                )
+            """)
+            
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS findings (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    scan_id INTEGER,
+                    type TEXT,
+                    port INTEGER,
+                    description TEXT,
+                    FOREIGN KEY (scan_id) REFERENCES scans (id)
+                )
+            """)
+            
+            # Insert scan metadata
+            cursor.execute("""
+                INSERT INTO scans (target, scan_type, timestamp)
+                VALUES (?, ?, ?)
+            """, (
+                self.metadata['target'],
+                self.metadata['scan_type'],
+                self.metadata['timestamp']
+            ))
+            
+            scan_id = cursor.lastrowid
+            
+            # Insert findings
+            for port in self.results.get('ports', []):
+                cursor.execute("""
+                    INSERT INTO findings (scan_id, type, port, description)
+                    VALUES (?, ?, ?, ?)
+                """, (scan_id, 'open_port', port, f"Port {port} is open"))
+            
+            for vuln in self.results.get('vulnerabilities', []):
+                cursor.execute("""
+                    INSERT INTO findings (scan_id, type, port, description)
+                    VALUES (?, ?, ?, ?)
+                """, (
+                    scan_id,
+                    'vulnerability',
+                    vuln.get('port', 0),
+                    f"{vuln['type']}: {vuln['details']}"
+                ))
+            
+            db_connection.commit()
+            self.logger.info("Results exported to database successfully")
+            
+        except Exception as e:
+            self.logger.error(f"Database export failed: {str(e)}")
+            db_connection.rollback()
+            raise
